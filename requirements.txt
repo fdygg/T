@@ -1,0 +1,7 @@
+discord.py
+fastapi
+uvicorn
+aiohttp
+pyjwt
+python-multipart
+pydantic
