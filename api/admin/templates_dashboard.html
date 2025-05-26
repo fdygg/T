@@ -4,7 +4,23 @@
 
 {% block page_title %}Dashboard{% endblock %}
 
+{% block actions %}
+<button type="button" class="btn btn-primary me-2" data-bs-toggle="modal" data-bs-target="#addStockModal">
+    <i class='bx bx-plus'></i> Add Stock
+</button>
+<button type="button" class="btn btn-success me-2" data-bs-toggle="modal" data-bs-target="#addProductModal">
+    <i class='bx bx-package'></i> Add Product
+</button>
+<a href="/admin/transactions" class="btn btn-info me-2">
+    <i class='bx bx-list-ul'></i> All Transactions
+</a>
+<button type="button" class="btn btn-secondary" onclick="exportReport()">
+    <i class='bx bx-export'></i> Export Report
+</button>
+{% endblock %}
+
 {% block content %}
+<!-- Stats Cards -->
 <div class="row">
     <div class="col-md-3 mb-4">
         <div class="card text-white bg-primary">
@@ -40,6 +56,55 @@
     </div>
 </div>
 
+<!-- Quick Action Cards -->
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="card bg-light action-card h-100">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="card-title">Manage Stock</h5>
+                        <p class="card-text">Add or update stock items</p>
+                        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addStockModal">
+                            Manage Stock
+                        </button>
+                    </div>
+                    <i class='bx bx-package fs-1'></i>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card bg-light action-card h-100">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="card-title">View Transactions</h5>
+                        <p class="card-text">Monitor all transactions</p>
+                        <a href="/admin/transactions" class="btn btn-primary">View All</a>
+                    </div>
+                    <i class='bx bx-transfer fs-1'></i>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card bg-light action-card h-100">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="card-title">Reports</h5>
+                        <p class="card-text">Generate and export reports</p>
+                        <button class="btn btn-primary" onclick="exportReport()">Export Report</button>
+                    </div>
+                    <i class='bx bx-file fs-1'></i>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Charts & Recent Transactions -->
 <div class="row">
     <div class="col-md-8">
         <div class="card">
@@ -68,6 +133,78 @@
         </div>
     </div>
 </div>
+
+<!-- Add Stock Modal -->
+<div class="modal fade" id="addStockModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Add New Stock</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addStockForm">
+                    <div class="mb-3">
+                        <label class="form-label">Product Name</label>
+                        <select class="form-select" required>
+                            {% for product in products %}
+                            <option value="{{ product.id }}">{{ product.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Quantity</label>
+                        <input type="number" class="form-control" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Price per Unit</label>
+                        <input type="number" class="form-control" required>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="submit" form="addStockForm" class="btn btn-primary">Add Stock</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Product Modal -->
+<div class="modal fade" id="addProductModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Add New Product</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addProductForm">
+                    <div class="mb-3">
+                        <label class="form-label">Product Name</label>
+                        <input type="text" class="form-control" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Description</label>
+                        <textarea class="form-control" rows="3"></textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Category</label>
+                        <select class="form-select">
+                            <option value="wl">World Lock</option>
+                            <option value="dl">Diamond Lock</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="submit" form="addProductForm" class="btn btn-primary">Add Product</button>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
@@ -86,5 +223,39 @@
             }]
         }
     });
+
+    // Export Report Function
+    function exportReport() {
+        // Add your export logic here
+        alert('Generating report...');
+        // You can implement the actual export functionality
+        // window.location.href = '/admin/export-report';
+    }
+
+    // Add animations for action cards
+    document.querySelectorAll('.action-card').forEach(card => {
+        card.addEventListener('mouseenter', () => {
+            card.style.transform = 'translateY(-5px)';
+        });
+        card.addEventListener('mouseleave', () => {
+            card.style.transform = 'translateY(0)';
+        });
+    });
 </script>
+
+<style>
+    .action-card {
+        transition: transform 0.2s ease;
+        cursor: pointer;
+    }
+    .action-card:hover {
+        transform: translateY(-5px);
+    }
+    .card {
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    .fs-1 {
+        font-size: 2.5rem!important;
+    }
+</style>
 {% endblock %}
