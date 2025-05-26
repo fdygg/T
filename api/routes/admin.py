@@ -4,10 +4,42 @@ from fastapi.security import HTTPBearer
 from datetime import datetime, timedelta
 import jwt
 from ..config import API_SECRET_KEY, APIConfig
-from ..utils.db import admin_db
+from database import get_connection
 
 router = APIRouter()
 security = HTTPBearer()
+
+def get_admin(discord_id: str):
+    """Get admin data from database"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        # Periksa apakah user adalah admin dari role_permissions
+        cursor.execute("""
+            SELECT rp.role_id, rp.permissions, ug.discord_id
+            FROM role_permissions rp
+            JOIN user_growid ug ON ug.discord_id = ?
+            WHERE rp.role_id = 'admin'
+        """, (discord_id,))
+        
+        result = cursor.fetchone()
+        if result:
+            return {
+                "discord_id": result[2],
+                "role": result[0],
+                "permissions": result[1],
+                "is_active": True
+            }
+        return None
+            
+    except Exception as e:
+        logger.error(f"Error getting admin: {e}")
+        return None
+            
+    finally:
+        if 'conn' in locals():
+            conn.close()
 
 def create_access_token(data: dict, expires_delta: timedelta = None):
     """Create JWT token"""
@@ -20,41 +52,19 @@ def create_access_token(data: dict, expires_delta: timedelta = None):
     encoded_jwt = jwt.encode(to_encode, API_SECRET_KEY, algorithm="HS256")
     return encoded_jwt
 
-@router.post("/admin/login")
-async def login_admin(discord_id: str):
-    """Login admin dan dapatkan token"""
-    admin = admin_db.get_admin(discord_id)
-    if not admin:
-        raise HTTPException(
-            status_code=401,
-            detail="Admin not found"
-        )
-    
-    if not admin["is_active"]:
-        raise HTTPException(
-            status_code=401,
-            detail="Admin is not active"
-        )
-    
-    # Create access token
-    token_data = {
-        "user_id": admin["discord_id"],
-        "username": admin["username"]
-    }
-    token = create_access_token(token_data)
-    
-    return {
-        "access_token": token,
-        "token_type": "bearer",
-        "admin": admin
-    }
-
-@router.get("/admin/auth")
-async def verify_admin(token: str):
+@router.get("/auth")
+async def verify_admin(token: str = None):
     """Verify admin token"""
+    logger.debug(f"Received auth request with token: {token}")
     try:
+        if not token:
+            raise HTTPException(
+                status_code=401,
+                detail="Token is required"
+            )
+            
         payload = jwt.decode(token, API_SECRET_KEY, algorithms=["HS256"])
-        admin = admin_db.get_admin(payload["user_id"])
+        admin = get_admin(payload["user_id"])
         if not admin:
             raise HTTPException(
                 status_code=401,
@@ -74,21 +84,39 @@ async def verify_admin(token: str):
             status_code=401,
             detail="Invalid token"
         )
+    except Exception as e:
+        logger.error(f"Error in verify_admin: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error"
+        )
 
-@router.get("/admin/me")
-async def get_current_admin(token: str):
-    """Get current admin info"""
+@router.post("/login")
+async def login_admin(discord_id: str):
+    """Login admin dan dapatkan token"""
     try:
-        payload = jwt.decode(token, API_SECRET_KEY, algorithms=["HS256"])
-        admin = admin_db.get_admin(payload["user_id"])
+        admin = get_admin(discord_id)
         if not admin:
             raise HTTPException(
                 status_code=401,
                 detail="Admin not found"
             )
-        return admin
+        
+        # Create access token
+        token_data = {
+            "user_id": admin["discord_id"],
+            "role": admin["role"]
+        }
+        token = create_access_token(token_data)
+        
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+            "admin": admin
+        }
     except Exception as e:
+        logger.error(f"Error in login_admin: {e}")
         raise HTTPException(
-            status_code=401,
-            detail="Invalid token"
+            status_code=500,
+            detail="Internal server error"
         )
