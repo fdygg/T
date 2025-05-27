@@ -1,4 +1,3 @@
-# main.py
 import discord
 from discord.ext import commands
 import os
@@ -7,32 +6,56 @@ import logging
 import asyncio
 import aiohttp
 import sqlite3
+import sys
 from pathlib import Path
 from datetime import datetime, UTC
 from threading import Thread
+import traceback
 
 # Import local modules
+from api.server import create_api_server
 from database import setup_database, get_connection
 from utils.command_handler import AdvancedCommandHandler
 from utils.button_handler import ButtonHandler
-from fastapi import FastAPI
-import uvicorn
-from api.routes import router as api_router
-from api.middleware import setup_middleware
-from api.dependencies import get_bot_instance
+from api.config import config, API_VERSION
 
-# Setup logging
+# Setup logging directory
 log_dir = Path('logs')
 log_dir.mkdir(exist_ok=True)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_dir / 'bot.log'),
-        logging.StreamHandler()
-    ]
+# Create formatter with current user
+current_user = "fdygg"  # Current user's login
+formatter = logging.Formatter(
+    '%(asctime)s UTC - %(name)s - %(levelname)s - [User: ' + current_user + ']\n'
+    'Message: %(message)s\n'
+    'Path: %(pathname)s\n'
+    'Function: %(funcName)s\n'
+    'Line: %(lineno)d\n'
+    'Details: %(exc_info)s\n'
 )
+
+# Setup file handler
+file_handler = logging.FileHandler(log_dir / f'bot_{datetime.now().strftime("%Y%m%d")}.log')
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(formatter)
+
+# Setup console handler
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setLevel(logging.DEBUG)
+console_handler.setFormatter(formatter)
+
+# Setup root logger
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.DEBUG)
+root_logger.addHandler(file_handler)
+root_logger.addHandler(console_handler)
+
+# Setup specific loggers
+loggers = ['uvicorn', 'fastapi', 'api', 'database', 'discord', 'admin']
+for logger_name in loggers:
+    logger = logging.getLogger(logger_name)
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = True
 
 logger = logging.getLogger(__name__)
 
@@ -56,12 +79,14 @@ class Config:
         }
         
         try:
+            logger.debug("Loading configuration file...")
             with open('config.json', 'r') as f:
                 config = json.load(f)
 
             # Validate and convert types
             for key, expected_type in required_keys.items():
                 if key not in config:
+                    logger.error(f"Missing required config key: {key}")
                     raise KeyError(f"Missing required key: {key}")
                 
                 if isinstance(expected_type, tuple):
@@ -71,10 +96,17 @@ class Config:
                     if not isinstance(config[key], expected_type):
                         config[key] = expected_type(config[key])
 
+            logger.info("Configuration loaded successfully")
             return config
 
         except Exception as e:
-            logger.error(f"Config error: {e}")
+            logger.error(f"""
+            Configuration error:
+            Error: {str(e)}
+            Time: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC
+            Stack Trace:
+            {traceback.format_exc()}
+            """)
             raise
 
 class MyBot(commands.Bot):
@@ -107,16 +139,31 @@ class MyBot(commands.Bot):
         self.donation_log_channel_id = int(config['id_donation_log'])
         self.history_buy_channel_id = int(config['id_history_buy'])
 
+        logger.debug(f"""
+        Bot initialized with:
+        Admin ID: {self.admin_id}
+        Guild ID: {self.guild_id}
+        Live Stock Channel: {self.live_stock_channel_id}
+        Purchase Log Channel: {self.log_purchase_channel_id}
+        Donation Log Channel: {self.donation_log_channel_id}
+        History Buy Channel: {self.history_buy_channel_id}
+        Startup Time: {self.startup_time}
+        """)
+
     async def setup_hook(self):
         """Initialize bot components"""
         try:
+            logger.debug("Setting up bot components...")
+            
             # Initialize command handler
             if not self._command_handler_ready:
                 self.command_handler = AdvancedCommandHandler(self)
                 self._command_handler_ready = True
+                logger.debug("Command handler initialized")
             
             # Create aiohttp session
             self.session = aiohttp.ClientSession()
+            logger.debug("aiohttp session created")
             
             # Load extensions
             extensions = [
@@ -133,18 +180,32 @@ class MyBot(commands.Bot):
                     await self.load_extension(ext)
                     logger.info(f'✅ Loaded extension: {ext}')
                 except Exception as e:
-                    logger.error(f'❌ Failed to load {ext}: {e}')
-                    logger.exception(f"Detailed error loading {ext}:")
+                    logger.error(f"""
+                    Failed to load extension:
+                    Extension: {ext}
+                    Error: {str(e)}
+                    Time: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC
+                    Stack Trace:
+                    {traceback.format_exc()}
+                    """)
                     
         except Exception as e:
-            logger.error(f"Setup error: {e}")
-            logger.exception("Detailed setup error:")
+            logger.error(f"""
+            Setup error:
+            Error: {str(e)}
+            Time: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC
+            Stack Trace:
+            {traceback.format_exc()}
+            """)
 
     async def close(self):
         """Cleanup on shutdown"""
+        logger.debug("Performing cleanup...")
         if self.session:
             await self.session.close()
+            logger.debug("aiohttp session closed")
         await super().close()
+        logger.info("Bot shutdown complete")
 
     async def on_ready(self):
         """Bot ready event handler"""
@@ -184,10 +245,16 @@ class MyBot(commands.Bot):
                 ),
                 status=discord.Status.online
             )
+            logger.debug("Bot status updated")
             
         except Exception as e:
-            logger.error(f"Ready event error: {e}")
-            logger.exception("Detailed ready error:")
+            logger.error(f"""
+            Ready event error:
+            Error: {str(e)}
+            Time: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC
+            Stack Trace:
+            {traceback.format_exc()}
+            """)
 
     async def on_message(self, message):
         """Message event handler"""
@@ -202,22 +269,50 @@ class MyBot(commands.Bot):
                 self.donation_log_channel_id,
                 self.history_buy_channel_id
             ]:
-                logger.info(
-                    f'Channel {message.channel.name}: '
-                    f'{message.author}: {message.content}'
-                )
+                logger.info(f"""
+                Channel Message:
+                Channel: {message.channel.name}
+                Author: {message.author}
+                Content: {message.content}
+                Time: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC
+                """)
 
             # Process commands
             if message.content.startswith(self.command_prefix):
                 await self.process_commands(message)
                 
         except Exception as e:
-            logger.error(f"Message handling error: {e}")
+            logger.error(f"""
+            Message handling error:
+            Error: {str(e)}
+            Channel: {message.channel.name}
+            Author: {message.author}
+            Content: {message.content}
+            Time: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC
+            Stack Trace:
+            {traceback.format_exc()}
+            """)
 
     async def on_interaction(self, interaction: discord.Interaction):
         """Interaction event handler"""
-        if interaction.type == discord.InteractionType.component:
-            await self.button_handler.handle_button(interaction)
+        try:
+            if interaction.type == discord.InteractionType.component:
+                logger.debug(f"""
+                Button interaction:
+                User: {interaction.user}
+                Custom ID: {interaction.data.get('custom_id')}
+                Time: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC
+                """)
+                await self.button_handler.handle_button(interaction)
+        except Exception as e:
+            logger.error(f"""
+            Interaction error:
+            Error: {str(e)}
+            User: {interaction.user}
+            Time: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC
+            Stack Trace:
+            {traceback.format_exc()}
+            """)
 
     async def on_command_error(self, ctx, error):
         """Command error handler"""
@@ -229,71 +324,99 @@ class MyBot(commands.Bot):
             
             if isinstance(error, commands.MissingPermissions):
                 await ctx.send("❌ You don't have permission!", delete_after=5)
+                logger.warning(f"""
+                Missing permissions:
+                User: {ctx.author}
+                Command: {command_name}
+                Time: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC
+                """)
             elif isinstance(error, commands.CommandOnCooldown):
                 await ctx.send(
                     f"⏰ Wait {error.retry_after:.1f}s!",
                     delete_after=5
                 )
+                logger.debug(f"""
+                Command on cooldown:
+                User: {ctx.author}
+                Command: {command_name}
+                Retry After: {error.retry_after:.1f}s
+                Time: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC
+                """)
             else:
-                logger.error(f"Command error in {command_name}: {error}")
-                logger.exception("Detailed command error:")
+                logger.error(f"""
+                Command error:
+                Command: {command_name}
+                Error: {str(error)}
+                User: {ctx.author}
+                Time: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC
+                Stack Trace:
+                {traceback.format_exc()}
+                """)
                 await ctx.send("❌ Command error!", delete_after=5)
                 
         except Exception as e:
-            logger.error(f"Error handler error: {e}")
-
-class APIServer:
-    def __init__(self, bot):
-        self.app = FastAPI(
-            title="Discord Bot API",
-            description="Backend API for Growtopia Shop Bot",
-            version="1.0.0"
-        )
-        self.bot = bot
-        self.setup_api()
-
-    def setup_api(self):
-        """Setup API routes and middleware"""
-        get_bot_instance.set_bot(self.bot)
-        self.app.include_router(api_router, prefix="/api/v1")
-        setup_middleware(self.app)
-
-    def run(self):
-        """Run API server"""
-        uvicorn.run(self.app, host="0.0.0.0", port=8080)
+            logger.error(f"""
+            Error handler error:
+            Error: {str(e)}
+            Time: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC
+            Stack Trace:
+            {traceback.format_exc()}
+            """)
 
 def main():
     """Main entry point"""
     try:
+        logger.info(f"""
+        Starting application:
+        Time: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC
+        User: {current_user}
+        Python Version: {sys.version}
+        """)
+        
         # Load config
-        config = Config.load()
+        bot_config = Config.load()
         
         # Setup database
+        logger.debug("Setting up database...")
         setup_database()
         
         # Create bot instance
-        bot = MyBot(config)
+        logger.debug("Creating bot instance...")
+        bot = MyBot(bot_config)
         
         # Setup API server
-        api = APIServer(bot)
-        api_thread = Thread(target=api.run, daemon=True)
-        api_thread.start()
+        logger.debug("Setting up API server...")
+        api = create_api_server(bot)
         
         # Run bot
-        bot.run(config['token'], reconnect=True)
+        logger.info("Starting bot...")
+        bot.run(bot_config['token'], reconnect=True)
         
     except Exception as e:
-        logger.critical(f"Fatal error: {e}")
-        logger.exception("Detailed fatal error:")
+        logger.critical(f"""
+        Fatal error:
+        Error: {str(e)}
+        Time: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC
+        Stack Trace:
+        {traceback.format_exc()}
+        """)
         
     finally:
         # Cleanup
         try:
+            logger.debug("Performing cleanup...")
             conn = get_connection()
             if conn:
                 conn.close()
+                logger.debug("Database connection closed")
         except Exception as e:
-            logger.error(f"Database cleanup error: {e}")
+            logger.error(f"""
+            Database cleanup error:
+            Error: {str(e)}
+            Time: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC
+            Stack Trace:
+            {traceback.format_exc()}
+            """)
 
 if __name__ == '__main__':
     main()
