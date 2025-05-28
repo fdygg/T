@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="dashboard">
+    <div class="sidebar">
+        <div class="user-info">
+            <img src="static/img/avatar.png" alt="User Avatar" class="avatar">
+            <h3>{{ username }}</h3>
+            <p class="role">Admin</p>
+        </div>
+        <nav class="sidebar-nav">
+            <a href="#overview" class="active">
+                <i class="fas fa-home"></i> Overview
+            </a>
+            <a href="#bot">
+                <i class="fas fa-robot"></i> Bot Status
+            </a>
+            <a href="#server">
+                <i class="fas fa-server"></i> Server
+            </a>
+            <a href="#logs">
+                <i class="fas fa-list"></i> Logs
+            </a>
+            <a href="#settings">
+                <i class="fas fa-cog"></i> Settings
+            </a>
+        </nav>
+    </div>
+
+    <div class="main-content">
+        <header class="dashboard-header">
+            <h1>Dashboard</h1>
+            <div class="header-actions">
+                <span class="server-time" id="serverTime">
+                    {{ current_time }}
+                </span>
+                <button class="btn btn-logout" onclick="logout()">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </button>
+            </div>
+        </header>
+
+        <section id="overview" class="dashboard-section">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <h3>Bot Status</h3>
+                    <p class="status online">Online</p>
+                    <p class="uptime" id="botUptime">{{ bot_uptime }}</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Memory Usage</h3>
+                    <div class="progress-bar">
+                        <div class="progress" id="memoryBar" style="width: 0%"></div>
+                    </div>
+                    <p class="detail" id="memoryDetail">Loading...</p>
+                </div>
+                <div class="stat-card">
+                    <h3>CPU Usage</h3>
+                    <div class="progress-bar">
+                        <div class="progress" id="cpuBar" style="width: 0%"></div>
+                    </div>
+                    <p class="detail" id="cpuDetail">Loading...</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Disk Space</h3>
+                    <div class="progress-bar">
+                        <div class="progress" id="diskBar" style="width: 0%"></div>
+                    </div>
+                    <p class="detail" id="diskDetail">Loading...</p>
+                </div>
+            </div>
+        </section>
+
+        <section id="logs" class="dashboard-section" style="display: none;">
+            <div class="logs-container">
+                <div class="logs-header">
+                    <h2>System Logs</h2>
+                    <div class="logs-actions">
+                        <select id="logLevel">
+                            <option value="all">All Levels</option>
+                            <option value="info">Info</option>
+                            <option value="warning">Warning</option>
+                            <option value="error">Error</option>
+                        </select>
+                        <button class="btn btn-refresh" onclick="refreshLogs()">
+                            <i class="fas fa-sync"></i> Refresh
+                        </button>
+                    </div>
+                </div>
+                <div class="logs-view" id="logsView">
+                    Loading logs...
+                </div>
+            </div>
+        </section>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let token = localStorage.getItem('token');
+let statsInterval;
+
+async function updateStats() {
+    try {
+        const response = await fetch('/api/v1/stats', {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+        const data = await response.json();
+        
+        // Update memory
+        const memoryPercent = data.system.memory.percent;
+        document.getElementById('memoryBar').style.width = `${memoryPercent}%`;
+        document.getElementById('memoryDetail').textContent = 
+            `${memoryPercent}% (${formatBytes(data.system.memory.used)} / ${formatBytes(data.system.memory.total)})`;
+        
+        // Update CPU
+        const cpuPercent = data.system.cpu_percent;
+        document.getElementById('cpuBar').style.width = `${cpuPercent}%`;
+        document.getElementById('cpuDetail').textContent = `${cpuPercent}%`;
+        
+        // Update disk
+        const diskPercent = data.system.disk.percent;
+        document.getElementById('diskBar').style.width = `${diskPercent}%`;
+        document.getElementById('diskDetail').textContent = 
+            `${diskPercent}% (${formatBytes(data.system.disk.used)} / ${formatBytes(data.system.disk.total)})`;
+            
+    } catch (error) {
+        console.error('Error updating stats:', error);
+    }
+}
+
+function formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
+}
+
+async function refreshLogs() {
+    try {
+        const level = document.getElementById('logLevel').value;
+        const response = await fetch(`/api/v1/logs?level=${level}`, {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+        const data = await response.json();
+        const logsView = document.getElementById('logsView');
+        logsView.innerHTML = data.logs.map(log => `
+            <div class="log-entry ${log.level.toLowerCase()}">
+                <span class="timestamp">${log.timestamp}</span>
+                <span class="level">${log.level}</span>
+                <span class="message">${log.message}</span>
+            </div>
+        `).join('');
+    } catch (error) {
+        console.error('Error refreshing logs:', error);
+    }
+}
+
+function updateServerTime() {
+    const now = new Date();
+    document.getElementById('serverTime').textContent = 
+        now.toISOString().replace('T', ' ').substr(0, 19) + ' UTC';
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    // Update stats every 5 seconds
+    updateStats();
+    statsInterval = setInterval(updateStats, 5000);
+    
+    // Update server time every second
+    updateServerTime();
+    setInterval(updateServerTime, 1000);
+    
+    // Load initial logs
+    refreshLogs();
+    
+    // Setup navigation
+    document.querySelectorAll('.sidebar-nav a').forEach(link => {
+        link.addEventListener('click', (e) => {
+            e.preventDefault();
+            const targetId = link.getAttribute('href').substr(1);
+            
+            // Hide all sections
+            document.querySelectorAll('.dashboard-section').forEach(section => {
+                section.style.display = 'none';
+            });
+            
+            // Show target section
+            document.getElementById(targetId).style.display = 'block';
+            
+            // Update active link
+            document.querySelectorAll('.sidebar-nav a').forEach(a => {
+                a.classList.remove('active');
+            });
+            link.classList.add('active');
+        });
+    });
+});
+
+function logout() {
+    localStorage.removeItem('token');
+    window.location.href = '/';
+}
+</script>
+{% endblock %}
