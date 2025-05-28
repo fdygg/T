@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="login-container">
+    <div class="login-box">
+        <h1>Bot Dashboard</h1>
+        <form id="loginForm" action="/api/v1/auth/login" method="POST">
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" required>
+            </div>
+            <div class="form-group">
+                <label for="api_key">API Key</label>
+                <input type="password" id="api_key" name="api_key" required>
+            </div>
+            <button type="submit" class="btn btn-primary">Login</button>
+        </form>
+        <div id="error-message" class="error-message"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const username = document.getElementById('username').value;
+    const api_key = document.getElementById('api_key').value;
+    
+    try {
+        const response = await fetch('/api/v1/auth/token', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ username, api_key })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            // Save token
+            localStorage.setItem('token', data.access_token);
+            localStorage.setItem('username', data.username);
+            
+            // Redirect to dashboard
+            window.location.href = '/dashboard';
+        } else {
+            document.getElementById('error-message').textContent = data.message;
+        }
+    } catch (error) {
+        document.getElementById('error-message').textContent = 'Login failed. Please try again.';
+    }
+});
+</script>
+{% endblock %}
