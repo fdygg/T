@@ -1,24 +1,40 @@
 from fastapi import APIRouter, Request, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.templating import Jinja2Templates
 from datetime import datetime, UTC, timedelta
 from typing import Optional, Dict, Any
 import logging
 import sys
 import platform
 import psutil
+from pathlib import Path
+from ..middleware import skip_auth
 from ..config import config, API_VERSION
 
-# Inisialisasi router utama dan logger
+# Initialize router and logger
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+# Setup templates
+templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
+
 # Import routes
+from .auth import router as auth_router  # Tambahkan ini
 from .balance import router as balance_router
 from .stock import router as stock_router
 from .transactions import router as transactions_router
 from .admin import router as admin_router
 
-# Include sub-routers dengan prefix dan tags
+# Include sub-routers with prefix and tags
+router.include_router(
+    auth_router,  # Tambahkan ini
+    prefix="/auth",
+    tags=["Auth"],
+    responses={
+        401: {"description": "Unauthorized"},
+        400: {"description": "Bad Request"}
+    }
+)
 router.include_router(
     balance_router, 
     prefix="/balance", 
@@ -54,7 +70,7 @@ def get_system_info() -> Dict[str, Any]:
         memory_info = {
             "total": memory.total,
             "available": memory.available,
-            "percent": memory.percent
+            "percent": round(memory.percent, 2)
         }
     except:
         memory_info = {"error": "Memory stats unavailable"}
@@ -64,15 +80,15 @@ def get_system_info() -> Dict[str, Any]:
         disk_info = {
             "total": disk.total,
             "free": disk.free,
-            "percent": disk.percent
+            "percent": round(disk.percent, 2)
         }
     except:
         disk_info = {"error": "Disk stats unavailable"}
         
     try:
-        cpu_percent = psutil.cpu_percent(interval=None)
+        cpu_percent = round(psutil.cpu_percent(interval=0.1), 2)
     except:
-        cpu_percent = None
+        cpu_percent = 0.0
         
     return {
         "python_version": sys.version,
@@ -82,6 +98,49 @@ def get_system_info() -> Dict[str, Any]:
         "disk": disk_info,
         "cpu_percent": cpu_percent
     }
+
+@router.get("/dashboard", response_class=HTMLResponse)
+@skip_auth
+async def dashboard(request: Request):
+    """Render dashboard page"""
+    try:
+        current_time = datetime.now(UTC)
+        system_info = get_system_info()
+        
+        # Log dashboard access
+        logger.info(f"""
+        Dashboard access:
+        Time: {current_time.strftime('%Y-%m-%d %H:%M:%S')} UTC
+        IP: {request.client.host}
+        User: {config._config["default_user"]}
+        """)
+        
+        return templates.TemplateResponse(
+            "dashboard.html",
+            {
+                "request": request,
+                "title": "Dashboard - Bot Control Panel",
+                "username": config._config["default_user"],
+                "current_time": current_time.strftime("%Y-%m-%d %H:%M:%S"),
+                "version": API_VERSION,
+                "system": system_info,
+                "endpoints": {
+                    "base": "/api/v1",
+                    "balance": "/api/v1/balance",
+                    "stock": "/api/v1/stock",
+                    "transactions": "/api/v1/transactions",
+                    "admin": "/api/v1/admin"
+                }
+            }
+        )
+    except Exception as e:
+        logger.error(f"""
+        Dashboard error:
+        Time: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC
+        Error: {str(e)}
+        User: {config._config["default_user"]}
+        """)
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/health")
 async def health_check(request: Request):
@@ -93,16 +152,24 @@ async def health_check(request: Request):
         current_time = datetime.now(UTC)
         system_info = get_system_info()
         
+        # Log health check
+        logger.info(f"""
+        Health check:
+        Time: {current_time.strftime('%Y-%m-%d %H:%M:%S')} UTC
+        IP: {request.client.host}
+        User: {config._config["default_user"]}
+        """)
+        
         response = {
             "status": "ok",
-            "timestamp": current_time.isoformat(),
+            "timestamp": current_time.strftime('%Y-%m-%d %H:%M:%S'),
             "user": config._config["default_user"],
             "version": API_VERSION,
             "system": system_info,
             "endpoints": {
                 "base": "/api/v1",
                 "balance": "/api/v1/balance",
-                "stock": "/api/v1/stock", 
+                "stock": "/api/v1/stock",
                 "transactions": "/api/v1/transactions",
                 "admin": "/api/v1/admin"
             },
@@ -118,7 +185,10 @@ async def health_check(request: Request):
             headers={
                 "Cache-Control": "no-cache, no-store, must-revalidate",
                 "Pragma": "no-cache",
-                "Expires": "0"
+                "Expires": "0",
+                "X-Content-Type-Options": "nosniff",
+                "X-Frame-Options": "DENY",
+                "X-XSS-Protection": "1; mode=block"
             }
         )
         
@@ -128,130 +198,14 @@ async def health_check(request: Request):
         Time: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC
         Error: {str(e)}
         Client: {request.client.host}:{request.client.port}
+        User: {config._config["default_user"]}
         """)
         raise HTTPException(
             status_code=500,
             detail={
                 "message": str(e),
                 "type": "InternalServerError",
-                "timestamp": datetime.now(UTC).isoformat()
-            }
-        )
-
-@router.get("/routes")
-async def list_routes():
-    """List all available API routes"""
-    routes = []
-    for route in router.routes:
-        routes.append({
-            "path": f"/api/v1{route.path}",
-            "name": route.name,
-            "methods": list(route.methods) if route.methods else None,
-            "tags": route.tags if hasattr(route, 'tags') else None,
-            "description": route.description if hasattr(route, 'description') else None
-        })
-    
-    return {
-        "timestamp": datetime.now(UTC).isoformat(),
-        "total_routes": len(routes),
-        "routes": sorted(routes, key=lambda x: x['path'])
-    }
-
-@router.get("/stats")
-async def get_stats():
-    """Get API server statistics"""
-    try:
-        current_time = datetime.now(UTC)
-        system_info = get_system_info()
-        process = psutil.Process()
-        
-        return {
-            "timestamp": current_time.isoformat(),
-            "system": {
-                "cpu_percent": system_info["cpu_percent"],
-                "memory": system_info["memory"],
-                "disk": system_info["disk"]
-            },
-            "process": {
-                "memory": dict(process.memory_info()._asdict()),
-                "cpu_percent": process.cpu_percent(),
-                "threads": process.num_threads(),
-                "open_files": len(process.open_files()),
-                "connections": len(process.connections())
-            }
-        }
-    except Exception as e:
-        logger.error(f"""
-        Error getting stats:
-        Time: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC
-        Error: {str(e)}
-        """)
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "message": str(e),
-                "type": "InternalServerError",
-                "timestamp": datetime.now(UTC).isoformat()
-            }
-        )
-
-@router.post("/auth/token")
-async def get_access_token(
-    username: str,
-    api_key: str,
-    expires_in: Optional[int] = None
-):
-    """Get JWT access token"""
-    try:
-        if not config.verify_api_key(api_key, username):
-            raise HTTPException(
-                status_code=401,
-                detail={
-                    "message": "Invalid API key",
-                    "type": "AuthenticationError",
-                    "timestamp": datetime.now(UTC).isoformat()
-                }
-            )
-        
-        # Use default expire time from config if not provided    
-        if expires_in is None:
-            expires_in = config.token_expire_minutes
-            
-        # Validate expire time
-        if expires_in > config.max_token_expire_minutes:
-            expires_in = config.max_token_expire_minutes
-        elif expires_in < config.min_token_expire_minutes:
-            expires_in = config.min_token_expire_minutes
-            
-        token = config.create_access_token(
-            username=username,
-            api_key=api_key,
-            expires_delta=timedelta(minutes=expires_in)
-        )
-        
-        return {
-            "access_token": token,
-            "token_type": "bearer",
-            "expires_in": expires_in * 60,
-            "username": username,
-            "timestamp": datetime.now(UTC).isoformat()
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"""
-        Error creating token:
-        Time: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC
-        Username: {username}
-        Error: {str(e)}
-        """)
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "message": "Error creating token",
-                "type": "InternalServerError",
-                "timestamp": datetime.now(UTC).isoformat()
+                "timestamp": datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
             }
         )
 
