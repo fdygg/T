@@ -57,7 +57,8 @@ class APIServer:
             memory_info = {
                 "total": memory.total,
                 "available": memory.available,
-                "percent": memory.percent
+                "used": memory.used,
+                "percent": round(memory.percent, 2)
             }
         except:
             memory_info = {"error": "Memory stats unavailable"}
@@ -66,16 +67,18 @@ class APIServer:
             disk = psutil.disk_usage('/')
             disk_info = {
                 "total": disk.total,
+                "used": disk.used,
                 "free": disk.free,
-                "percent": disk.percent
+                "percent": round(disk.percent, 2)
             }
         except:
             disk_info = {"error": "Disk stats unavailable"}
             
         try:
-            cpu_percent = psutil.cpu_percent(interval=None)
+            # Give small interval for more accurate reading
+            cpu_percent = round(psutil.cpu_percent(interval=0.1), 2)
         except:
-            cpu_percent = None
+            cpu_percent = 0.0
             
         return {
             "memory": memory_info,
@@ -149,43 +152,46 @@ class APIServer:
                 )
                 return JSONResponse(openapi_schema)
             
+            # Di dalam class APIServer, method setup_api()
+            
             # Add health check endpoint
             @self.app.get("/")
             async def root(request: Request):
                 uptime = datetime.now(UTC) - self.startup_time
                 system_info = self.get_system_info()
                 
-                return JSONResponse(
-                    content={
-                        "status": "ok",
-                        "timestamp": datetime.now(UTC).isoformat(),
-                        "version": API_VERSION,
-                        "bot": {
-                            "name": self.bot.user.name if self.bot.user else None,
-                            "id": str(self.bot.user.id) if self.bot.user else None,
-                            "startup_time": self.bot.startup_time.isoformat() if hasattr(self.bot, 'startup_time') else None,
-                            "uptime": str(uptime),
-                            "guilds": len(self.bot.guilds) if hasattr(self.bot, 'guilds') else 0
-                        },
-                        "server": {
-                            "hostname": platform.node(),
-                            "platform": platform.platform(),
-                            "python": platform.python_version(),
-                            **system_info
-                        },
-                        "client": {
-                            "ip": request.client.host,
-                            "port": request.client.port,
-                            "user_agent": request.headers.get("user-agent")
-                        }
+                response_data = {
+                    "status": "ok",
+                    "timestamp": datetime.now(UTC).isoformat(),
+                    "version": API_VERSION,
+                    "bot": {
+                        "name": self.bot.user.name if self.bot.user else None,
+                        "id": str(self.bot.user.id) if self.bot.user else None,
+                        "startup_time": self.bot.startup_time.isoformat() if hasattr(self.bot, 'startup_time') else None,
+                        "uptime": str(uptime),
+                        "guilds": len(self.bot.guilds) if hasattr(self.bot, 'guilds') else 0
                     },
+                    "server": {
+                        "hostname": platform.node(),
+                        "platform": platform.platform(),
+                        "python": platform.python_version(),
+                        **system_info
+                    },
+                    "client": {
+                        "ip": request.client.host,
+                        "port": request.client.port,
+                        "user_agent": request.headers.get("user-agent")
+                    }
+                }
+            
+                return JSONResponse(
+                    content=response_data,
                     headers={
                         "Cache-Control": "no-cache, no-store, must-revalidate",
                         "Pragma": "no-cache",
                         "Expires": "0"
                     }
                 )
-            
             # Add docs endpoints
             @self.app.get("/docs", include_in_schema=False)
             async def custom_swagger_ui_html():
@@ -240,4 +246,114 @@ class APIServer:
             """)
             raise
 
-    # ... kode run() dan create_api_server() tetap sama ...
+# ... kode sebelumnya tetap sama ...
+
+    def run(self):
+        """Run API server"""
+        try:
+            config = uvicorn.Config(
+                self.app,
+                host="0.0.0.0",
+                port=8080,
+                log_level="debug",
+                access_log=True,
+                reload=False,
+                http="h11",
+                loop="asyncio",
+                timeout_keep_alive=5,
+                timeout_notify=30,
+                limit_concurrency=1000,
+                limit_max_requests=10000,
+                log_config={
+                    "version": 1,
+                    "disable_existing_loggers": False,
+                    "formatters": {
+                        "default": {
+                            "format": "%(asctime)s UTC - %(name)s - %(levelname)s - [User: fdygg]\nMessage: %(message)s",
+                            "datefmt": "%Y-%m-%d %H:%M:%S"
+                        }
+                    },
+                    "handlers": {
+                        "default": {
+                            "formatter": "default",
+                            "class": "logging.StreamHandler",
+                            "stream": "ext://sys.stdout"
+                        }
+                    },
+                    "loggers": {
+                        "uvicorn": {"handlers": ["default"], "level": "INFO"},
+                        "uvicorn.error": {"level": "INFO"},
+                        "uvicorn.access": {
+                            "handlers": ["default"],
+                            "level": "INFO",
+                            "propagate": False
+                        }
+                    }
+                }
+            )
+            
+            server = uvicorn.Server(config)
+            
+            logger.info(f"""
+            Starting API server:
+            Time: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC
+            Host: 0.0.0.0
+            Port: 8080
+            Debug: True
+            Version: {API_VERSION}
+            """)
+            
+            server.run()
+            
+        except Exception as e:
+            logger.error(f"""
+            Failed to start API server:
+            Error: {str(e)}
+            Time: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC
+            Stack Trace:
+            {traceback.format_exc()}
+            """)
+            raise
+
+def create_api_server(bot) -> APIServer:
+    """Create and start API server in a separate thread"""
+    try:
+        logger.debug(f"""
+        Creating API server:
+        Time: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC
+        Bot Type: {type(bot).__name__ if bot else 'None'}
+        """)
+
+        api = APIServer(bot)
+        
+        # Create and start server thread
+        api_thread = Thread(
+            target=api.run,
+            daemon=True,
+            name="APIServerThread"
+        )
+        api_thread.start()
+        
+        logger.info(f"""
+        API server thread started:
+        Time: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC
+        Thread ID: {api_thread.ident}
+        Thread Name: {api_thread.name}
+        Status: Running
+        Version: {API_VERSION}
+        """)
+        
+        return api
+        
+    except Exception as e:
+        logger.error(f"""
+        Error creating API server:
+        Error: {str(e)}
+        Time: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC
+        Stack Trace:
+        {traceback.format_exc()}
+        """)
+        raise
+
+# Export api server creation function
+__all__ = ["create_api_server"]
